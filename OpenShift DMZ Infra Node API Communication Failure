@@ -1,0 +1,183 @@
+# 🧩 OpenShift DMZ Infra Node API Communication Failure
+
+### Kubernetes Architecture 기반 Network Troubleshooting Case Study
+
+---
+
+## 📖 Overview
+
+DMZ 영역에 위치한 OpenShift Infra Node에서 Kubernetes API 접근이 불가능해지면서
+DNS, Monitoring, Node Tuning 등 Core Component가 연쇄적으로 장애를 일으킨 사례입니다.
+
+본 문서는 Kubernetes 공식 아키텍처와 Service–Endpoint 동작 원칙을 기반으로
+실제 Root Cause를 분석하고 해결한 Tech Case Study입니다.
+
+---
+
+## 🏗 Environment
+
+| Item         | Description                                 |
+| ------------ | ------------------------------------------- |
+| Platform     | Red Hat OpenShift Container Platform 4.18   |
+| Network Zone | DMZ Infra Segment                           |
+| Role         | OpenShift Platform Engineer                 |
+| Scope        | Control Plane Communication Troubleshooting |
+
+---
+
+## 🚨 Problem
+
+### Symptoms
+
+* DMZ Infra Node → Kubernetes API 접근 불가
+* Service IP 통신 실패 (10.x.x.1:443)
+* Core Component 장애 발생
+
+### Impacted Components
+
+* DNS
+* Monitoring
+* Metrics
+* Node Tuning
+* Machine Config
+
+### Network Observation
+
+```
+DMZ Infra → Master 6443 : TIMEOUT
+DMZ Infra → Service IP 443 : TIMEOUT
+```
+
+---
+
+## 🔍 Investigation Approach
+
+이번 장애는 단순 네트워크 문제가 아닌
+**Kubernetes Control Plane Communication 구조 이해**를 기반으로 분석했습니다.
+
+---
+
+## 🧠 Architecture Analysis
+
+### 1️⃣ All Control Communication Ends at kube-apiserver
+
+```
+Node / Pod
+   ↓
+kube-apiserver (6443)
+```
+
+API Server 접근 불가 시 클러스터 제어 기능은 정상 동작하지 않습니다.
+
+---
+
+### 2️⃣ Load Balancer is NOT Mandatory Path
+
+잘못된 가정:
+
+```
+API 통신은 L4 LB만 열면 된다
+```
+
+실제 구조:
+
+```
+Node → Master Direct Communication Required
+```
+
+Load Balancer는 HA 또는 External Access 용도일 뿐 내부 필수 경로가 아닙니다.
+
+---
+
+### 3️⃣ Kubernetes Service is a Virtual Entry Point
+
+```
+Service IP (443)
+     ↓
+Endpoint → kube-apiserver (6443)
+```
+
+Service IP는 논리적 주소이며
+Endpoint 접근이 불가능하면 Service도 실패합니다.
+
+---
+
+### 4️⃣ kube-proxy Behavior
+
+kube-proxy 역할:
+
+* Service 트래픽 Forwarding
+* API Proxy 아님
+* Network 우회 기능 없음
+
+---
+
+### 5️⃣ Node Configuration Pull Model
+
+```
+Node → API Server → Config Pull
+```
+
+API 접근 차단 시:
+
+* Node Tuning Waiting
+* Machine Config 미적용
+
+---
+
+## 🎯 Root Cause
+
+DMZ 방화벽 정책에서 Infra Node → Master Node 직접 API 통신이 차단되어 있었습니다.
+
+차단 포트:
+
+* TCP 6443 (Kubernetes API)
+* TCP 22623 (Machine Config Server)
+
+---
+
+## 🛠 Resolution
+
+### Firewall Rule Update
+
+| Source         | Destination | Protocol | Port  | Purpose        |
+| -------------- | ----------- | -------- | ----- | -------------- |
+| DMZ Infra Node | Master Node | TCP      | 6443  | Kubernetes API |
+| DMZ Infra Node | Master Node | TCP      | 22623 | Machine Config |
+
+---
+
+## ✅ Result
+
+* API Server 접근 정상화
+* Service IP 통신 복구
+* OpenShift Core Component 자동 복구
+* Cluster Healthy 상태 회복
+
+---
+
+## 📊 Key Learnings
+
+* Kubernetes 내부 API 통신은 LB 의존 구조가 아님
+* Service IP는 Virtual IP이며 Endpoint 접근이 핵심
+* Node 설정은 Push가 아닌 Pull 구조
+* DMZ 환경에서도 Node ↔ Master Direct Path 필수
+
+---
+
+## 💼 Skills Demonstrated
+
+* OpenShift Control Plane Deep Troubleshooting
+* Kubernetes Networking Architecture 이해
+* DMZ Network Design Validation
+* Service / Endpoint 구조 기반 Root Cause 분석
+* Enterprise 금융권 환경 대응 경험
+
+---
+
+## 🧩 One-Line Summary
+
+DMZ Infra Node에서 Master Node API 통신 차단으로 발생한 OpenShift Core 장애를
+Kubernetes 아키텍처 기반으로 분석하고 Firewall 정책 수정으로 해결한 사례.
+
+---
